@@ -6,6 +6,12 @@ import { requireServerMember, requireServerPermission } from '../middleware/perm
 import { Permissions } from '../utils/permissions';
 import { getMemberContext } from '../utils/permissionResolver';
 import {
+  canGrantPermissions,
+  canGrantAddedPermissions,
+  canActOnRolePosition,
+  canManageRoles,
+} from '../utils/escalation';
+import {
   listRoles,
   createRole,
   getRole,
@@ -43,7 +49,7 @@ router.post(
     const ctx = getMemberContext(req.params.id, req.userId!);
     const wanted = req.body.permissions ?? 0;
     // Escalation guard #1: can't grant permissions you don't have yourself.
-    if (!ctx.isOwner && (ctx.basePermissions & wanted) !== wanted) {
+    if (!canGrantPermissions(ctx, wanted)) {
       return res.status(403).json({ error: 'Cannot grant permissions you do not have' });
     }
     const role = createRole(req.params.id, {
@@ -79,19 +85,16 @@ router.patch('/roles/:id', requireAuth, validateBody(patchRoleSchema), (req, res
   const role = getRole(req.params.id);
   if (!role) return res.status(404).json({ error: 'Not found' });
   const ctx = getMemberContext(role.server_id, req.userId!);
-  if (!ctx.isOwner && !(ctx.basePermissions & Permissions.MANAGE_ROLES)) {
+  if (!canManageRoles(ctx)) {
     return res.status(403).json({ error: 'Missing MANAGE_ROLES' });
   }
   // Escalation guard #2: can't edit a role at/above your highest position.
-  if (!ctx.isOwner && role.position >= ctx.highestPosition) {
+  if (!canActOnRolePosition(ctx, role.position)) {
     return res.status(403).json({ error: 'Cannot edit a role at or above your highest role' });
   }
   // Escalation guard #1: can't add permission bits you don't hold.
-  if (req.body.permissions !== undefined && !ctx.isOwner) {
-    const added = req.body.permissions & ~role.permissions; // bits being newly granted
-    if ((ctx.basePermissions & added) !== added) {
-      return res.status(403).json({ error: 'Cannot grant permissions you do not have' });
-    }
+  if (req.body.permissions !== undefined && !canGrantAddedPermissions(ctx, role.permissions, req.body.permissions)) {
+    return res.status(403).json({ error: 'Cannot grant permissions you do not have' });
   }
   const updated = updateRole(req.params.id, {
     ...req.body,
@@ -113,10 +116,10 @@ router.delete('/roles/:id', requireAuth, (req, res) => {
   if (!role) return res.status(404).json({ error: 'Not found' });
   if (role.is_default) return res.status(400).json({ error: 'Cannot delete @everyone' });
   const ctx = getMemberContext(role.server_id, req.userId!);
-  if (!ctx.isOwner && !(ctx.basePermissions & Permissions.MANAGE_ROLES)) {
+  if (!canManageRoles(ctx)) {
     return res.status(403).json({ error: 'Missing MANAGE_ROLES' });
   }
-  if (!ctx.isOwner && role.position >= ctx.highestPosition) {
+  if (!canActOnRolePosition(ctx, role.position)) {
     return res.status(403).json({ error: 'Cannot delete a role at or above your highest role' });
   }
   deleteRole(req.params.id);
@@ -138,17 +141,15 @@ router.put('/servers/:id/members/:userId/roles/:roleId', requireAuth, (req, res)
   if (!role || role.server_id !== serverId) return res.status(404).json({ error: 'Role not found' });
   if (!isMember(serverId, userId)) return res.status(404).json({ error: 'Member not found' });
   const ctx = getMemberContext(serverId, req.userId!);
-  if (!ctx.isOwner && !(ctx.basePermissions & Permissions.MANAGE_ROLES)) {
+  if (!canManageRoles(ctx)) {
     return res.status(403).json({ error: 'Missing MANAGE_ROLES' });
   }
   // Escalation guards: can't assign a role above your own, nor one granting perms you lack.
-  if (!ctx.isOwner) {
-    if (role.position >= ctx.highestPosition) {
-      return res.status(403).json({ error: 'Cannot assign a role at or above your highest role' });
-    }
-    if ((ctx.basePermissions & role.permissions) !== role.permissions) {
-      return res.status(403).json({ error: 'Cannot assign a role granting permissions you lack' });
-    }
+  if (!canActOnRolePosition(ctx, role.position)) {
+    return res.status(403).json({ error: 'Cannot assign a role at or above your highest role' });
+  }
+  if (!canGrantPermissions(ctx, role.permissions)) {
+    return res.status(403).json({ error: 'Cannot assign a role granting permissions you lack' });
   }
   assignRole(serverId, userId, roleId);
   logAudit({
@@ -168,10 +169,10 @@ router.delete('/servers/:id/members/:userId/roles/:roleId', requireAuth, (req, r
   const role = getRole(roleId);
   if (!role || role.server_id !== serverId) return res.status(404).json({ error: 'Role not found' });
   const ctx = getMemberContext(serverId, req.userId!);
-  if (!ctx.isOwner && !(ctx.basePermissions & Permissions.MANAGE_ROLES)) {
+  if (!canManageRoles(ctx)) {
     return res.status(403).json({ error: 'Missing MANAGE_ROLES' });
   }
-  if (!ctx.isOwner && role.position >= ctx.highestPosition) {
+  if (!canActOnRolePosition(ctx, role.position)) {
     return res.status(403).json({ error: 'Cannot manage a role at or above your highest role' });
   }
   unassignRole(serverId, userId, roleId);

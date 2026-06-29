@@ -15,7 +15,7 @@ const TIMEOUT_MS = 5000;
 const MAX_BYTES = 2 * 1024 * 1024;
 
 // Basic SSRF guard: reject private / loopback / link-local hosts (spec §12).
-function isBlockedHost(hostname: string): boolean {
+export function isBlockedHost(hostname: string): boolean {
   const lower = hostname.toLowerCase();
   if (lower === 'localhost' || lower.endsWith('.local')) return true;
   if (net.isIP(hostname)) {
