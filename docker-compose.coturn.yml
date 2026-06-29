@@ -1,0 +1,20 @@
+# coturn TURN server for NetChat voice/video (spec §10, §13).
+# The one service reachable via a direct UDP port-forward (3478 + relay range).
+# TURN_SECRET must match server/.env. Set EXTERNAL_IP to the home public IP
+# (or omit `external-ip` in turnserver.conf to let coturn auto-detect).
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      -n
+      --listening-port=3478
+      --realm=netchat.local
+      --use-auth-secret
+      --static-auth-secret=${TURN_SECRET}
+      --min-port=49152
+      --max-port=49252
+      --no-tls
+      --no-dtls
+      --log-file=stdout
