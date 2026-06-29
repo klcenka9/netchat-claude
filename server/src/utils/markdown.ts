@@ -1,47 +1,28 @@
 import MarkdownIt from 'markdown-it';
 import sanitizeHtml from 'sanitize-html';
 
-// Discord's actual formatting subset: bold/italic/underline/strike/inline-code/
-// code-block/blockquote/spoiler. We render server-side, then hard-sanitize.
-const md = new MarkdownIt('zero', {
-  html: false,
-  linkify: true,
-  breaks: true,
-});
-md.enable([
-  'emphasis',
-  'backticks',
-  'fence',
-  'code',
-  'blockquote',
-  'strikethrough',
-  'newline',
-  'linkify',
-  'text',
-  'paragraph',
-]);
+// Discord's formatting subset: bold/italic/underline/strike/inline-code/
+// code-block/blockquote/spoiler. Start from the default preset (so emphasis,
+// strikethrough, code, fences and blockquotes work reliably) and disable the
+// block constructs Discord doesn't have. Rendered server-side, then hard-sanitized.
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
-// Underline: Discord uses __text__ (markdown-it maps __ to <strong>); we add a
-// dedicated rule so __x__ -> <u> and **x** -> <strong>.
-md.renderer.rules.strong_open = () => '<strong>';
-md.renderer.rules.strong_close = () => '</strong>';
+// Strip Markdown features Discord doesn't support.
+md.disable(['heading', 'lheading', 'hr', 'list', 'table', 'reference', 'image', 'link']);
 
-// Spoiler: ||text|| -> <span class="spoiler">text</span>
-md.inline.ruler.before('emphasis', 'spoiler', (state, silent) => {
-  const start = state.pos;
-  if (state.src.charCodeAt(start) !== 0x7c /* | */) return false;
-  if (state.src.charCodeAt(start + 1) !== 0x7c) return false;
-  const end = state.src.indexOf('||', start + 2);
-  if (end < 0) return false;
-  if (!silent) {
-    const token = state.push('spoiler', '', 0);
-    token.content = state.src.slice(start + 2, end);
-  }
-  state.pos = end + 2;
-  return true;
-});
-md.renderer.rules.spoiler = (tokens, idx) =>
-  `<span class="spoiler">${md.utils.escapeHtml(tokens[idx].content)}</span>`;
+// Underline: Discord uses __text__. markdown-it maps both ** and __ to <strong>;
+// emit <u> when the token markup was '__'.
+md.renderer.rules.strong_open = (tokens, idx) =>
+  tokens[idx].markup === '__' ? '<u>' : '<strong>';
+md.renderer.rules.strong_close = (tokens, idx) =>
+  tokens[idx].markup === '__' ? '</u>' : '</strong>';
+
+// Spoiler: ||text|| -> <span class="spoiler">text</span>. markdown-it's text rule
+// swallows '|' before any inline rule sees it, so we bracket spoilers with
+// private-use sentinels before render and swap them for spans after sanitize
+// (the inner text is markdown-processed and sanitized normally in between).
+const SPOILER_OPEN = String.fromCharCode(0xe000);
+const SPOILER_CLOSE = String.fromCharCode(0xe001);
 
 const SANITIZE_OPTS: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -62,6 +43,14 @@ const SANITIZE_OPTS: sanitizeHtml.IOptions = {
 };
 
 export function renderMarkdown(input: string): string {
-  const rendered = md.render(input);
-  return sanitizeHtml(rendered, SANITIZE_OPTS);
+  // Strip any stray sentinel chars a user might paste, then bracket spoilers.
+  const cleaned = input.split(SPOILER_OPEN).join('').split(SPOILER_CLOSE).join('');
+  const pre = cleaned.replace(/\|\|([\s\S]+?)\|\|/g, (_m, inner) => `${SPOILER_OPEN}${inner}${SPOILER_CLOSE}`);
+  const rendered = md.render(pre);
+  const safe = sanitizeHtml(rendered, SANITIZE_OPTS);
+  return safe
+    .split(SPOILER_OPEN)
+    .join('<span class="spoiler">')
+    .split(SPOILER_CLOSE)
+    .join('</span>');
 }

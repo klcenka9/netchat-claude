@@ -2,7 +2,13 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.middleware';
 import { validateBody } from '../middleware/validate.middleware';
-import { getUserById, updateUserProfile, toPublicUser, User } from '../models/user.model';
+import {
+  getUserById,
+  getUserByUsername,
+  updateUserProfile,
+  toPublicUser,
+  User,
+} from '../models/user.model';
 import { upload, fileUrl } from './uploads.routes';
 
 const router = Router();
@@ -54,6 +60,15 @@ router.post('/me/banner', requireAuth, upload.single('file'), (req, res) => {
   const url = fileUrl(req.file.filename);
   updateUserProfile(req.userId!, { banner_url: url });
   res.json({ banner_url: url });
+});
+
+// Resolve a username to a public profile (used to start a DM). Declared before
+// '/:id' so "lookup" isn't captured as an id.
+router.get('/lookup', requireAuth, (req, res) => {
+  const username = typeof req.query.username === 'string' ? req.query.username : '';
+  const user = getUserByUsername(username);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  res.json(toPublicUser(user));
 });
 
 router.get('/:id', requireAuth, (req, res) => {
