@@ -5,11 +5,11 @@ run NetChat natively with Node.js + PM2. Everything is PowerShell, from the repo
 folder.
 
 ## 0. Install
-- **Node.js 20 LTS** for Windows — https://nodejs.org (the MSI). This is all the
-  app needs; `better-sqlite3` ships prebuilt Windows binaries, so `npm install`
-  works without a compiler. (If it ever tries to compile and fails, install
-  "Visual Studio Build Tools" with the *Desktop development with C++* workload and
-  re-run.)
+- **Node.js 20 LTS** (recommended) — https://nodejs.org. Node 22/24 also work
+  (`better-sqlite3` v12 ships prebuilt binaries for all of them, so `npm install`
+  needs no compiler). If you previously ran `npm install` on a Node version
+  without a prebuild and it failed, delete the half-built `node_modules` first
+  (`Remove-Item -Recurse -Force node_modules`) and re-run.
 - **Git** for Windows.
 - A **domain on Cloudflare**.
 
