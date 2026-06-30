@@ -25,3 +25,19 @@ export const env = {
 };
 
 export const isProd = env.NODE_ENV === 'production';
+
+// Fail fast if production is started with the dev-fallback secrets (§15: no
+// hardcoded secrets in a live instance). setup.sh always writes real values.
+if (isProd) {
+  const insecure: string[] = [];
+  if (env.JWT_SECRET.startsWith('dev_')) insecure.push('JWT_SECRET');
+  if (env.JWT_REFRESH_SECRET.startsWith('dev_')) insecure.push('JWT_REFRESH_SECRET');
+  if (env.TURN_SECRET === 'dev_turn_secret') insecure.push('TURN_SECRET');
+  if (env.REGISTRATION_CODE === 'dev-code') insecure.push('REGISTRATION_CODE');
+  if (insecure.length) {
+    throw new Error(
+      `Refusing to start in production with default secrets: ${insecure.join(', ')}. ` +
+        'Set real values in server/.env (run ./setup.sh).',
+    );
+  }
+}
