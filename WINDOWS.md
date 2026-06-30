@@ -5,6 +5,10 @@ The bash `setup.sh` / PM2 / apt path is Linux-only. On Windows 10 the clean way 
 Node/build-tools/PM2/coturn-on-Windows headaches. Run everything in **PowerShell**
 from the repo folder.
 
+> **No Docker?** If Docker Desktop won't run on the PC (no virtualization /
+> Win10 Home), use the native path instead: **`WINDOWS-NATIVE.md`** (Node + PM2,
+> `.\setup.ps1`). It avoids Docker entirely.
+
 ## 0. Install
 - **Docker Desktop** for Windows (uses the WSL2 backend — accept the WSL2 prompt).
 - **Git** for Windows (to clone + pull).

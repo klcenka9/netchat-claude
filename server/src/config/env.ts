@@ -22,6 +22,13 @@ export const env = {
   TURN_SECRET: process.env.TURN_SECRET ?? 'dev_turn_secret',
   TURN_DOMAIN: process.env.TURN_DOMAIN ?? 'turn.example.com',
   REGISTRATION_CODE: required('REGISTRATION_CODE', 'dev-code'),
+  // Optional: a managed/external TURN with static credentials (e.g. metered.ca,
+  // Cloudflare, Twilio). If set, /api/voice/ice-config returns these instead of
+  // signing coturn-style time-limited creds — lets a host skip running coturn
+  // entirely (handy on Windows where coturn has no native build).
+  TURN_URL: process.env.TURN_URL ?? '',
+  TURN_STATIC_USERNAME: process.env.TURN_STATIC_USERNAME ?? '',
+  TURN_STATIC_CREDENTIAL: process.env.TURN_STATIC_CREDENTIAL ?? '',
 };
 
 export const isProd = env.NODE_ENV === 'production';

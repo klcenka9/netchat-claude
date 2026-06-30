@@ -62,7 +62,8 @@ npm run admin:reset-password -- --username <name>
 
 ## Deployment quick links
 
-- **Windows 10/11 host** → `WINDOWS.md` (Docker Desktop: `docker compose up -d --build`).
+- **Windows 10/11 host** → `WINDOWS.md` (Docker Desktop: `docker compose up -d --build`),
+  or **no Docker** → `WINDOWS-NATIVE.md` (Node + PM2: `.\setup.ps1`).
 - **Linux/macOS host** → `./setup.sh` (below) or `docker compose up -d --build`.
 - **Hand it to an AI agent** → `DEPLOY.md` (fill the DATA block, paste the prompt).
 
