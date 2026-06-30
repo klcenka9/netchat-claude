@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { Hash, Reply, SmilePlus, Pin, Trash2, X, Search, MessagesSquare } from 'lucide-react';
+import { Hash, Reply, SmilePlus, Pin, Trash2, X, Search, MessagesSquare, Pencil, Link2 } from 'lucide-react';
 import { useServerStore } from '../store/serverStore';
 import { useChatStore, type Message } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
@@ -129,6 +129,8 @@ function MessageRow({
 }) {
   const [hover, setHover] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(m.content ?? '');
   const activeServerId = useServerStore((s) => s.activeServerId);
   const name = m.webhook?.name ?? m.author?.display_name ?? 'Unknown';
   const avatarUser = m.webhook
@@ -140,6 +142,30 @@ function MessageRow({
   }
   function pin() {
     getSocket()?.emit('message:pin', { messageId: m.id, pinned: !m.pinned });
+  }
+  function startEdit() {
+    setEditText(m.content ?? '');
+    setEditing(true);
+  }
+  function saveEdit() {
+    const content = editText.trim();
+    if (content && content !== m.content) {
+      getSocket()?.emit('message:edit', { messageId: m.id, content });
+    }
+    setEditing(false);
+  }
+  function startThread() {
+    const tname = prompt('Thread name:');
+    if (tname?.trim()) {
+      getSocket()?.emit('thread:create', {
+        channelId: m.channelId,
+        sourceMessageId: m.id,
+        name: tname.trim(),
+      });
+    }
+  }
+  function copyLink() {
+    void navigator.clipboard?.writeText(`${location.origin}/channels/${m.channelId}/${m.id}`);
   }
 
   return (
@@ -163,14 +189,39 @@ function MessageRow({
           <span className="text-xs text-muted">{new Date(m.createdAt * 1000).toLocaleString()}</span>
           {m.editedAt && <span className="text-xs text-muted">(edited)</span>}
         </div>
-        <div
-          className="message-content text-text break-words"
-          dangerouslySetInnerHTML={{ __html: m.contentHtml }}
-          onClick={(e) => {
-            const t = e.target as HTMLElement;
-            if (t.classList.contains('spoiler')) t.classList.toggle('revealed');
-          }}
-        />
+        {editing ? (
+          <div className="my-1">
+            <input
+              autoFocus
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveEdit();
+                if (e.key === 'Escape') setEditing(false);
+              }}
+              className="w-full bg-bg-soft border border-border rounded px-3 py-1.5 outline-none"
+            />
+            <div className="text-xs text-muted mt-0.5">
+              escape to{' '}
+              <button onClick={() => setEditing(false)} className="text-accent">
+                cancel
+              </button>{' '}
+              · enter to{' '}
+              <button onClick={saveEdit} className="text-accent">
+                save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="message-content text-text break-words"
+            dangerouslySetInnerHTML={{ __html: m.contentHtml }}
+            onClick={(e) => {
+              const t = e.target as HTMLElement;
+              if (t.classList.contains('spoiler')) t.classList.toggle('revealed');
+            }}
+          />
+        )}
         {m.attachments.map((a) => (
           <Attachment key={a.id} a={a} />
         ))}
@@ -219,7 +270,12 @@ function MessageRow({
             )}
           </div>
           <IconBtn onClick={() => onReply(m)} title="Reply"><Reply size={16} /></IconBtn>
-          <IconBtn onClick={pin} title="Pin"><Pin size={16} /></IconBtn>
+          {mine && !m.webhook && (
+            <IconBtn onClick={startEdit} title="Edit"><Pencil size={16} /></IconBtn>
+          )}
+          <IconBtn onClick={pin} title={m.pinned ? 'Unpin' : 'Pin'}><Pin size={16} /></IconBtn>
+          <IconBtn onClick={startThread} title="Start thread"><MessagesSquare size={16} /></IconBtn>
+          <IconBtn onClick={copyLink} title="Copy link"><Link2 size={16} /></IconBtn>
           {mine && (
             <IconBtn onClick={del} title="Delete">
               <Trash2 size={16} className="text-red-400" />

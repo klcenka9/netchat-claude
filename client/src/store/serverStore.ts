@@ -62,6 +62,8 @@ interface ServerState {
   selectChannel: (id: string) => void;
   createServer: (name: string) => Promise<void>;
   joinInvite: (code: string) => Promise<void>;
+  leaveServer: (id: string) => Promise<void>;
+  deleteServer: (id: string) => Promise<void>;
   upsertChannel: (c: Channel) => void;
   removeChannel: (id: string, serverId: string) => void;
   upsertCategory: (c: Category) => void;
@@ -113,6 +115,24 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   async joinInvite(code) {
     await api(`/invites/${code}/join`, { method: 'POST' });
+    await get().loadServers();
+  },
+
+  async leaveServer(id) {
+    await api(`/servers/${id}/leave`, { method: 'POST' });
+    set((s) => ({
+      activeServerId: s.activeServerId === id ? null : s.activeServerId,
+      activeChannelId: s.activeServerId === id ? null : s.activeChannelId,
+    }));
+    await get().loadServers();
+  },
+
+  async deleteServer(id) {
+    await api(`/servers/${id}`, { method: 'DELETE' });
+    set((s) => ({
+      activeServerId: s.activeServerId === id ? null : s.activeServerId,
+      activeChannelId: s.activeServerId === id ? null : s.activeChannelId,
+    }));
     await get().loadServers();
   },
 

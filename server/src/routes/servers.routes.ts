@@ -96,6 +96,23 @@ router.get('/servers/:id/members', requireAuth, requireServerMember(), (req, res
   res.json(enriched);
 });
 
+// Leave a server. Any member may leave; the owner must delete the server instead
+// (spec §2 lists "Leave server" but §8 has no dedicated endpoint — most
+// Discord-faithful choice: self-removal that doesn't require KICK_MEMBERS).
+router.post('/servers/:id/leave', requireAuth, requireServerMember(), (req, res) => {
+  const server = getServer(req.params.id);
+  if (!server) return res.status(404).json({ error: 'Not found' });
+  if (server.owner_id === req.userId!) {
+    return res.status(400).json({ error: 'Owner must delete the server, not leave it' });
+  }
+  removeMember(req.params.id, req.userId!);
+  emitToServer(req.params.id, 'member:left', {
+    serverId: req.params.id,
+    userId: req.userId!,
+  });
+  res.json({ ok: true });
+});
+
 const nickSchema = z.object({ nickname: z.string().max(32).nullable() });
 router.patch(
   '/servers/:id/members/:userId',

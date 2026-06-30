@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Hash, Volume2, Settings, ChevronDown, Plus, Link } from 'lucide-react';
-import { useServerStore } from '../store/serverStore';
+import { Hash, Volume2, Settings, ChevronDown, Plus, Link, LogOut, Trash2 } from 'lucide-react';
+import { useServerStore, type Channel } from '../store/serverStore';
+import { useAuthStore } from '../store/authStore';
 import { useVoiceStore } from '../store/voiceStore';
 import { useReadStateStore } from '../store/readStateStore';
 import { api } from '../api/http';
@@ -17,15 +18,20 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
     selectChannel,
     myPermissions,
   } = useServerStore();
+  const { leaveServer, deleteServer } = useServerStore();
+  const meId = useAuthStore((s) => s.me?.id);
   const joinVoice = useVoiceStore((s) => s.join);
   const [showCreate, setShowCreate] = useState<null | 'channel' | 'category'>(null);
   const [showInvite, setShowInvite] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editChannel, setEditChannel] = useState<Channel | null>(null);
   const server = servers.find((s) => s.id === activeServerId);
   if (!server) return <div className="w-60 bg-bg-alt" />;
 
   const perms = myPermissions(server.id);
   const canManageChannels = hasPermission(perms, Permissions.MANAGE_CHANNELS);
   const canInvite = hasPermission(perms, Permissions.CREATE_INVITE);
+  const isOwner = server.owner_id === meId;
 
   const serverChannels = channels[server.id] ?? [];
   const serverCategories = categories[server.id] ?? [];
@@ -33,13 +39,62 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
 
   return (
     <div className="w-60 bg-bg-alt flex flex-col">
-      <button
-        onClick={onOpenSettings}
-        className="h-12 px-4 flex items-center justify-between border-b border-border shadow-sm hover:bg-bg-soft"
-      >
-        <span className="font-semibold truncate">{server.name}</span>
-        <ChevronDown size={18} className="text-muted" />
-      </button>
+      <div className="relative">
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          className="w-full h-12 px-4 flex items-center justify-between border-b border-border shadow-sm hover:bg-bg-soft"
+        >
+          <span className="font-semibold truncate">{server.name}</span>
+          <ChevronDown size={18} className="text-muted" />
+        </button>
+        {menuOpen && (
+          <div
+            className="absolute left-2 right-2 top-12 bg-bg-soft border border-border rounded-lg shadow-lg p-1 z-40"
+            onMouseLeave={() => setMenuOpen(false)}
+          >
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenSettings();
+              }}
+              className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded hover:bg-bg-alt text-left"
+            >
+              <Settings size={16} /> Server Settings
+            </button>
+            {canInvite && (
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  setShowInvite(true);
+                }}
+                className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded hover:bg-bg-alt text-left"
+              >
+                <Link size={16} /> Invite People
+              </button>
+            )}
+            <div className="border-t border-border my-1" />
+            {isOwner ? (
+              <button
+                onClick={() => {
+                  if (confirm(`Delete "${server.name}"? This cannot be undone.`)) deleteServer(server.id);
+                }}
+                className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded hover:bg-bg-alt text-left text-red-400"
+              >
+                <Trash2 size={16} /> Delete Server
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (confirm(`Leave "${server.name}"?`)) leaveServer(server.id);
+                }}
+                className="w-full flex items-center gap-2 text-sm px-2 py-1.5 rounded hover:bg-bg-alt text-left text-red-400"
+              >
+                <LogOut size={16} /> Leave Server
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="flex-1 overflow-y-auto py-2 px-2">
         {(canManageChannels || canInvite) && (
@@ -75,8 +130,10 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
         <ChannelGroup
           channels={uncategorized}
           activeId={activeChannelId}
+          canManage={canManageChannels}
           onSelect={selectChannel}
           onVoice={(id) => joinVoice({ type: 'channel', channelId: id })}
+          onEdit={setEditChannel}
         />
         {serverCategories.map((cat) => {
           const inCat = serverChannels.filter((c) => c.category_id === cat.id && c.type !== 'thread');
@@ -86,8 +143,10 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
               <ChannelGroup
                 channels={inCat}
                 activeId={activeChannelId}
+                canManage={canManageChannels}
                 onSelect={selectChannel}
                 onVoice={(id) => joinVoice({ type: 'channel', channelId: id })}
+                onEdit={setEditChannel}
               />
             </div>
           );
@@ -105,6 +164,9 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
         />
       )}
       {showInvite && <InviteModal serverId={server.id} onClose={() => setShowInvite(false)} />}
+      {editChannel && (
+        <ChannelSettingsModal channel={editChannel} onClose={() => setEditChannel(null)} />
+      )}
     </div>
   );
 }
@@ -112,13 +174,17 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
 function ChannelGroup({
   channels,
   activeId,
+  canManage,
   onSelect,
   onVoice,
+  onEdit,
 }: {
-  channels: { id: string; name: string; type: string }[];
+  channels: Channel[];
   activeId: string | null;
+  canManage: boolean;
   onSelect: (id: string) => void;
   onVoice: (id: string) => void;
+  onEdit: (c: Channel) => void;
 }) {
   const isChannelUnread = useReadStateStore((s) => s.isChannelUnread);
   // Subscribe to latest map so unread dots re-render on new messages.
@@ -129,21 +195,113 @@ function ChannelGroup({
       {channels.map((c) => {
         const unread = c.type !== 'voice' && isChannelUnread(c.id) && activeId !== c.id;
         return (
-          <button
-            key={c.id}
-            onClick={() => (c.type === 'voice' ? onVoice(c.id) : onSelect(c.id))}
-            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-bg-soft hover:text-text ${
-              activeId === c.id ? 'bg-bg-soft text-text' : unread ? 'text-text' : 'text-muted'
-            }`}
-          >
-            {unread && <span className="w-1.5 h-1.5 rounded-full bg-text -ml-1" />}
-            {c.type === 'voice' ? <Volume2 size={18} /> : <Hash size={18} />}
-            <span className={`truncate text-sm ${unread ? 'font-semibold' : ''}`}>{c.name}</span>
-            {c.type === 'voice' && <Settings size={14} className="ml-auto opacity-0" />}
-          </button>
+          <div key={c.id} className="group/ch relative flex items-center">
+            <button
+              onClick={() => (c.type === 'voice' ? onVoice(c.id) : onSelect(c.id))}
+              className={`flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-bg-soft hover:text-text ${
+                activeId === c.id ? 'bg-bg-soft text-text' : unread ? 'text-text' : 'text-muted'
+              }`}
+            >
+              {unread && <span className="w-1.5 h-1.5 rounded-full bg-text -ml-1" />}
+              {c.type === 'voice' ? <Volume2 size={18} /> : <Hash size={18} />}
+              <span className={`truncate text-sm ${unread ? 'font-semibold' : ''}`}>{c.name}</span>
+            </button>
+            {canManage && (
+              <button
+                onClick={() => onEdit(c)}
+                title="Edit channel"
+                className="absolute right-1 opacity-0 group-hover/ch:opacity-100 text-muted hover:text-text p-1"
+              >
+                <Settings size={14} />
+              </button>
+            )}
+          </div>
         );
       })}
     </>
+  );
+}
+
+function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose: () => void }) {
+  const upsertChannel = useServerStore((s) => s.upsertChannel);
+  const removeChannel = useServerStore((s) => s.removeChannel);
+  const [name, setName] = useState(channel.name);
+  const [topic, setTopic] = useState(channel.topic ?? '');
+  const [nsfw, setNsfw] = useState(!!channel.nsfw);
+  const [slowmode, setSlowmode] = useState(channel.slowmode_seconds);
+  const [err, setErr] = useState('');
+
+  async function save() {
+    setErr('');
+    try {
+      const updated = await api<Channel>(`/channels/${channel.id}`, {
+        method: 'PATCH',
+        json: { name, topic: topic || null, nsfw, slowmode_seconds: slowmode },
+      });
+      upsertChannel(updated);
+      onClose();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+  async function del() {
+    if (!confirm(`Delete #${channel.name}?`)) return;
+    await api(`/channels/${channel.id}`, { method: 'DELETE' });
+    removeChannel(channel.id, channel.server_id);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 grid place-items-center z-50" onClick={onClose}>
+      <div className="bg-bg-alt p-6 rounded-lg w-[440px]" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-xl font-bold mb-4">Edit #{channel.name}</h2>
+        {err && <div className="text-red-300 text-sm mb-2">{err}</div>}
+        <label className="block text-xs font-bold text-muted uppercase mb-1">Name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full bg-bg-soft border border-border rounded px-3 py-2 mb-3 outline-none"
+        />
+        {channel.type === 'text' && (
+          <>
+            <label className="block text-xs font-bold text-muted uppercase mb-1">Topic</label>
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              className="w-full bg-bg-soft border border-border rounded px-3 py-2 mb-3 outline-none"
+            />
+            <label className="flex items-center gap-2 mb-3 text-sm">
+              <input type="checkbox" checked={nsfw} onChange={(e) => setNsfw(e.target.checked)} />
+              NSFW channel
+            </label>
+            <label className="block text-xs font-bold text-muted uppercase mb-1">
+              Slowmode: {slowmode}s
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={120}
+              value={slowmode}
+              onChange={(e) => setSlowmode(parseInt(e.target.value, 10))}
+              className="w-full mb-4"
+            />
+          </>
+        )}
+        <div className="flex justify-between">
+          <button onClick={del} className="text-red-400 hover:underline text-sm">
+            Delete channel
+          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded hover:bg-bg-soft text-muted">
+              Cancel
+            </button>
+            <button onClick={save} className="bg-accent text-white px-4 py-2 rounded">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
