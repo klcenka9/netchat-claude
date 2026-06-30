@@ -1,11 +1,17 @@
 # NetChat — deployment
 
-Two ways to deploy. Either run the script yourself, or hand this repo to an AI
-coding agent (Cursor / Claude Code / etc.) and let it drive.
+Pick by host OS:
+
+- **Windows 10/11** → use Docker Desktop. Full step-by-step in **`WINDOWS.md`**
+  (`docker compose up -d --build` + Cloudflare Tunnel). This is the recommended
+  path for the Windows host.
+- **Linux/macOS** → either `./setup.sh` (Option A below) or Docker
+  (`docker compose up -d --build`, same as Windows).
+- **Hand it to an AI agent** → Option B below (works for any OS; tell it your OS).
 
 ---
 
-## Option A — one command (you run it on the Prague PC)
+## Option A — one command (Linux/macOS host)
 
 ```bash
 cd netchat
@@ -45,30 +51,40 @@ CF_RECORD_ID      = <DNS record id for TURN_DOMAIN, only for Dynamic DNS>
 ### PROMPT — paste this to the agent (after the DATA block)
 ```
 You are deploying this repo (NetChat, a self-hosted Discord clone) to my home
-server. Read README.md and setup.sh first. Then:
+server. First read README.md, DEPLOY.md, and — if my HOST_OS is Windows —
+WINDOWS.md. Then deploy:
 
-1. Confirm prerequisites: Node.js 20 LTS, npm, git, openssl (and Docker if
-   HAS_DOCKER=yes). Tell me exact commands if anything is missing.
-2. Run ./setup.sh, feeding it APP_DOMAIN and REGISTRATION_CODE from the DATA
-   block. It generates server/.env with random JWT/TURN secrets, installs +
-   builds server & client, starts the app under PM2, starts coturn, and runs the
-   smoke test. Show me the smoke-test result.
-3. Set up Cloudflare Tunnel for the app (no open ports):
-   install cloudflared from Cloudflare's signed APT repo (commands are in
-   README.md), `cloudflared tunnel login`, `cloudflared tunnel create netchat`,
-   then map APP_DOMAIN -> http://localhost:3000 in the dashboard, and
-   `sudo cloudflared service install <CF_TUNNEL_TOKEN>`.
-4. Voice/TURN: tell me the exact router rule to add (forward UDP 3478 and
-   49152-49252 to this machine's LAN IP). Create a DNS-only (grey-cloud) A record
-   TURN_DOMAIN -> my public IP. If PUBLIC_IP_STATIC=no, install the cron in
-   scripts/ddns-update.sh using CF_API_TOKEN / CF_ZONE_ID / CF_RECORD_ID.
-5. Add the backup cron:  0 3 * * * <repo>/scripts/backup.sh
-6. Verify end to end: open https://APP_DOMAIN, register an account with
-   REGISTRATION_CODE, and confirm chat + a voice channel work. Report status.
+OS path:
+- If HOST_OS is Windows: use Docker Desktop, following WINDOWS.md exactly
+  (create server\.env and root .env with secrets, then `docker compose up -d
+  --build`). Do NOT use setup.sh / PM2 / apt on Windows.
+- If HOST_OS is Linux/macOS: run ./setup.sh (it generates server/.env, builds,
+  starts under PM2, starts coturn, runs the smoke test) OR
+  `docker compose up -d --build`. Either is fine.
 
-Rules: never print or commit secrets. Everything sensitive lives in server/.env
-(gitignored). If a step needs a value I haven't given you, stop and ask me for
-exactly that one value.
+Then, regardless of OS:
+1. Generate strong random secrets for JWT_SECRET, JWT_REFRESH_SECRET and a single
+   TURN_SECRET; put them in server/.env, and put the SAME TURN_SECRET plus
+   TURN_EXTERNAL_IP (my public IP) in the root .env for coturn. Never reuse the
+   dev defaults. Fill CLIENT_ORIGIN=https://APP_DOMAIN and REGISTRATION_CODE.
+2. Bring the app up and confirm http://localhost:3000/health returns ok.
+3. Cloudflare Tunnel (public HTTPS, no open ports): install cloudflared,
+   `cloudflared tunnel login`, `cloudflared tunnel create netchat`, then tell me
+   to map APP_DOMAIN -> http://localhost:3000 in the dashboard and give you
+   CF_TUNNEL_TOKEN; install it as a service.
+4. Voice/TURN: tell me the exact router rule (forward UDP 3478 and 49152-49252 to
+   this machine's LAN IP) and have me create a DNS-only (grey-cloud) A record
+   TURN_DOMAIN -> my public IP. If PUBLIC_IP_STATIC=no, schedule the DDNS script
+   (scripts/ddns-update.ps1 on Windows / scripts/ddns-update.sh on Linux).
+5. Schedule the backup (Task Scheduler -> scripts\backup.ps1 on Windows, or cron
+   -> scripts/backup.sh on Linux).
+6. Verify: open https://APP_DOMAIN, register with REGISTRATION_CODE, confirm chat
+   and a voice channel work. Report status.
+
+Rules: never print or commit secrets (they live in server/.env and root .env,
+both gitignored). better-sqlite3 must be built on this machine / in the
+container — never copy node_modules from elsewhere. If a step needs a value I
+haven't given you, stop and ask me for exactly that one value.
 ```
 
 ---

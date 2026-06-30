@@ -60,6 +60,12 @@ npm run admin:reset-password -- --username <name>
 # prints a one-time reset link (1h expiry) to hand to the user out-of-band
 ```
 
+## Deployment quick links
+
+- **Windows 10/11 host** → `WINDOWS.md` (Docker Desktop: `docker compose up -d --build`).
+- **Linux/macOS host** → `./setup.sh` (below) or `docker compose up -d --build`.
+- **Hand it to an AI agent** → `DEPLOY.md` (fill the DATA block, paste the prompt).
+
 ## Production hosting (Prague PC) — summary of spec §13
 
 1. **Clone & build**

@@ -1,0 +1,42 @@
+# NetChat full stack via Docker (recommended on Windows 10 — Docker Desktop).
+#   docker compose up -d --build
+#
+# Reads secrets from server/.env (app) and the root .env (coturn substitution).
+# Persists the SQLite DB + uploads in ./data on the host.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/data/netchat.db
+      - UPLOADS_DIR=/data/uploads
+    volumes:
+      - ./data:/data
+    # Only exposed to localhost; Cloudflare Tunnel (cloudflared) connects here.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  # Voice TURN relay. On Windows/macOS Docker there is no host networking, so the
+  # UDP ports are published explicitly and the host's PUBLIC IP must be given as
+  # TURN_EXTERNAL_IP (in the root .env) so relay candidates are correct.
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "49152-49252:49152-49252/udp"
+    command:
+      - -n
+      - --listening-port=3478
+      - --realm=netchat.local
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --min-port=49152
+      - --max-port=49252
+      - --no-tls
+      - --no-dtls
+      - --external-ip=${TURN_EXTERNAL_IP}
+      - --log-file=stdout
