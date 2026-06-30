@@ -7,7 +7,7 @@ import { useAuthStore } from '../store/authStore';
 import { useUiStore } from '../store/uiStore';
 import { useReadStateStore } from '../store/readStateStore';
 import { getSocket } from '../api/socket';
-import { uploadFile } from '../api/http';
+import { api, uploadFile } from '../api/http';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 
@@ -332,6 +332,21 @@ function Composer({
   const [pickerOpen, setPickerOpen] = useState(false);
   const typingRef = useRef<number>(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const members = useServerStore((s) => (serverId ? s.members[serverId] ?? [] : []));
+  const channels = useServerStore((s) => (serverId ? s.channels[serverId] ?? [] : []));
+  const [emojis, setEmojis] = useState<{ id: string; name: string; image_url: string }[]>([]);
+  const [suggest, setSuggest] = useState<{
+    kind: '@' | '#' | ':';
+    items: { key: string; label: string; insert: string; img?: string | null }[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!serverId) return;
+    api<{ id: string; name: string; image_url: string }[]>(`/servers/${serverId}/emojis`)
+      .then(setEmojis)
+      .catch(() => undefined);
+  }, [serverId]);
 
   function send() {
     const content = text.trim();
@@ -342,11 +357,51 @@ function Composer({
       replyToId: replyTo?.id,
     });
     setText('');
+    setSuggest(null);
     clearReply();
+  }
+
+  // Inline autocomplete for @mentions, #channels and :emoji (spec §11).
+  function computeSuggest(v: string) {
+    const m = v.match(/([@#:])([a-zA-Z0-9_]*)$/);
+    if (!m) return setSuggest(null);
+    const [, sym, q] = m;
+    const query = q.toLowerCase();
+    if (sym === '@') {
+      const items = members
+        .filter(
+          (u) =>
+            u.username.toLowerCase().includes(query) ||
+            u.display_name.toLowerCase().includes(query),
+        )
+        .slice(0, 8)
+        .map((u) => ({ key: u.user_id, label: `@${u.username}`, insert: `@${u.username} ` }));
+      setSuggest(items.length ? { kind: '@', items } : null);
+    } else if (sym === '#') {
+      const items = channels
+        .filter((c) => c.type === 'text' && c.name.toLowerCase().includes(query))
+        .slice(0, 8)
+        .map((c) => ({ key: c.id, label: `#${c.name}`, insert: `#${c.name} ` }));
+      setSuggest(items.length ? { kind: '#', items } : null);
+    } else {
+      if (query.length < 1) return setSuggest(null);
+      const items = emojis
+        .filter((e) => e.name.toLowerCase().includes(query))
+        .slice(0, 8)
+        .map((e) => ({ key: e.id, label: `:${e.name}:`, insert: `:${e.name}: `, img: e.image_url }));
+      setSuggest(items.length ? { kind: ':', items } : null);
+    }
+  }
+
+  function pick(insert: string) {
+    setText((t) => t.replace(/([@#:])([a-zA-Z0-9_]*)$/, insert));
+    setSuggest(null);
+    inputRef.current?.focus();
   }
 
   function onType(v: string) {
     setText(v);
+    computeSuggest(v);
     const now = Date.now();
     if (now - typingRef.current > 3000) {
       typingRef.current = now;
@@ -382,14 +437,42 @@ function Composer({
         </div>
       )}
       <div className="bg-panel rounded-lg flex items-center px-4 relative">
+        {suggest && (
+          <div className="absolute bottom-full left-2 right-2 mb-2 bg-bg-soft border border-border rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto z-30">
+            <div className="text-xs text-muted px-3 pt-2 pb-1 uppercase font-bold">
+              {suggest.kind === '@' ? 'Members' : suggest.kind === '#' ? 'Channels' : 'Emoji'}
+            </div>
+            {suggest.items.map((it) => (
+              <button
+                key={it.key}
+                onClick={() => pick(it.insert)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-bg-alt"
+              >
+                {it.img && <img src={it.img} alt="" className="w-5 h-5 object-contain" />}
+                <span className="truncate">{it.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <button onClick={() => fileRef.current?.click()} className="text-muted hover:text-text text-2xl pr-3">
           +
         </button>
         <input ref={fileRef} type="file" hidden onChange={onFile} />
         <input
+          ref={inputRef}
           value={text}
           onChange={(e) => onType(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') return setSuggest(null);
+            if (e.key === 'Enter' && suggest && suggest.items.length) {
+              e.preventDefault();
+              return pick(suggest.items[0].insert);
+            }
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
           placeholder={`Message #${channel.name}`}
           className="flex-1 bg-transparent py-3 outline-none"
         />
