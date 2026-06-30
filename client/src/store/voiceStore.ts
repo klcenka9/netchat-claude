@@ -40,7 +40,23 @@ interface VoiceState {
 
 // Peer connections live outside zustand (non-serializable).
 const peers = new Map<string, RTCPeerConnection>();
+// Keep refs to the optional video tracks so we can stop + un-send them on toggle-off.
+let cameraTrack: MediaStreamTrack | null = null;
+let screenTrack: MediaStreamTrack | null = null;
 let iceConfig: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// Remove a track from the local stream and every peer connection's senders, then
+// renegotiate so remote peers actually drop the video (not just freeze).
+async function removeLocalTrack(track: MediaStreamTrack | null, ctx: VoiceContext, local: MediaStream | null) {
+  if (!track) return;
+  for (const pc of peers.values()) {
+    const sender = pc.getSenders().find((s) => s.track === track);
+    if (sender) pc.removeTrack(sender);
+  }
+  track.stop();
+  local?.removeTrack(track);
+  await renegotiateAll(ctx);
+}
 
 function sigEventNames(ctx: VoiceContext) {
   return ctx.type === 'channel'
@@ -107,6 +123,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     peers.forEach((pc) => pc.close());
     peers.clear();
     get().localStream?.getTracks().forEach((t) => t.stop());
+    cameraTrack = null;
+    screenTrack = null;
     set({ context: null, localStream: null, participants: {}, cameraOn: false, screenOn: false });
   },
 
@@ -146,33 +164,40 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   },
 
   async toggleCamera() {
+    const ctx = get().context;
+    if (!ctx) return;
     const on = !get().cameraOn;
     if (on) {
       const cam = await navigator.mediaDevices.getUserMedia({ video: true });
-      const track = cam.getVideoTracks()[0];
-      get().localStream?.addTrack(track);
-      peers.forEach((pc) => pc.addTrack(track, get().localStream!));
-      await renegotiateAll(get().context!);
+      cameraTrack = cam.getVideoTracks()[0];
+      get().localStream?.addTrack(cameraTrack);
+      peers.forEach((pc) => pc.addTrack(cameraTrack!, get().localStream!));
+      await renegotiateAll(ctx);
     } else {
-      get()
-        .localStream?.getVideoTracks()
-        .forEach((t) => {
-          t.stop();
-          get().localStream?.removeTrack(t);
-        });
+      await removeLocalTrack(cameraTrack, ctx, get().localStream);
+      cameraTrack = null;
     }
     set({ cameraOn: on });
   },
 
   async toggleScreen() {
+    const ctx = get().context;
+    if (!ctx) return;
     const on = !get().screenOn;
     if (on) {
+      // Capture system audio too where the browser supports it (spec §10).
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      const track = display.getVideoTracks()[0];
-      get().localStream?.addTrack(track);
-      peers.forEach((pc) => pc.addTrack(track, get().localStream!));
-      track.onended = () => set({ screenOn: false });
-      await renegotiateAll(get().context!);
+      screenTrack = display.getVideoTracks()[0];
+      get().localStream?.addTrack(screenTrack);
+      peers.forEach((pc) => pc.addTrack(screenTrack!, get().localStream!));
+      // Stop-sharing via the browser's own UI ends the track.
+      screenTrack.onended = () => {
+        void useVoiceStore.getState().toggleScreen();
+      };
+      await renegotiateAll(ctx);
+    } else {
+      await removeLocalTrack(screenTrack, ctx, get().localStream);
+      screenTrack = null;
     }
     set({ screenOn: on });
   },
