@@ -36,6 +36,44 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
   const serverChannels = channels[server.id] ?? [];
   const serverCategories = categories[server.id] ?? [];
   const uncategorized = serverChannels.filter((c) => !c.category_id && c.type !== 'thread');
+  const upsertChannel = useServerStore((s) => s.upsertChannel);
+
+  // Drag-and-drop reorder (spec §2/§11): rebuild the channel list in its new
+  // visual order, then PATCH every channel whose position/category changed.
+  async function reorderChannel(draggedId: string, targetId: string) {
+    if (!canManageChannels || draggedId === targetId) return;
+    const all = serverChannels.filter((c) => c.type !== 'thread');
+    const target = all.find((c) => c.id === targetId);
+    const dragged = all.find((c) => c.id === draggedId);
+    if (!target || !dragged) return;
+
+    // Visual order: uncategorized first, then each category's channels.
+    const order: typeof all = [];
+    order.push(...all.filter((c) => !c.category_id).sort((a, b) => a.position - b.position));
+    for (const cat of serverCategories) {
+      order.push(...all.filter((c) => c.category_id === cat.id).sort((a, b) => a.position - b.position));
+    }
+    const without = order.filter((c) => c.id !== draggedId);
+    const idx = without.findIndex((c) => c.id === targetId);
+    const movedCategory = target.category_id ?? null;
+    without.splice(idx, 0, { ...dragged, category_id: movedCategory });
+
+    // Renumber and persist only what changed.
+    const updates: { id: string; position: number; category_id: string | null }[] = [];
+    without.forEach((c, i) => {
+      const orig = all.find((o) => o.id === c.id)!;
+      if (orig.position !== i || (orig.category_id ?? null) !== (c.category_id ?? null)) {
+        updates.push({ id: c.id, position: i, category_id: c.category_id ?? null });
+      }
+    });
+    for (const u of updates) {
+      const updated = await api<Channel>(`/channels/${u.id}`, {
+        method: 'PATCH',
+        json: { position: u.position, category_id: u.category_id },
+      });
+      upsertChannel(updated);
+    }
+  }
 
   return (
     <div className="w-60 bg-bg-alt flex flex-col">
@@ -134,6 +172,7 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
           onSelect={selectChannel}
           onVoice={(id) => joinVoice({ type: 'channel', channelId: id })}
           onEdit={setEditChannel}
+          onReorder={reorderChannel}
         />
         {serverCategories.map((cat) => {
           const inCat = serverChannels.filter((c) => c.category_id === cat.id && c.type !== 'thread');
@@ -147,6 +186,7 @@ export default function ChannelSidebar({ onOpenSettings }: { onOpenSettings: () 
                 onSelect={selectChannel}
                 onVoice={(id) => joinVoice({ type: 'channel', channelId: id })}
                 onEdit={setEditChannel}
+                onReorder={reorderChannel}
               />
             </div>
           );
@@ -178,6 +218,7 @@ function ChannelGroup({
   onSelect,
   onVoice,
   onEdit,
+  onReorder,
 }: {
   channels: Channel[];
   activeId: string | null;
@@ -185,8 +226,10 @@ function ChannelGroup({
   onSelect: (id: string) => void;
   onVoice: (id: string) => void;
   onEdit: (c: Channel) => void;
+  onReorder: (draggedId: string, targetId: string) => void;
 }) {
   const isChannelUnread = useReadStateStore((s) => s.isChannelUnread);
+  const [dragOver, setDragOver] = useState<string | null>(null);
   // Subscribe to latest map so unread dots re-render on new messages.
   useReadStateStore((s) => s.channelLatest);
   useReadStateStore((s) => s.channelRead);
@@ -195,7 +238,26 @@ function ChannelGroup({
       {channels.map((c) => {
         const unread = c.type !== 'voice' && isChannelUnread(c.id) && activeId !== c.id;
         return (
-          <div key={c.id} className="group/ch relative flex items-center">
+          <div
+            key={c.id}
+            className={`group/ch relative flex items-center ${
+              dragOver === c.id ? 'border-t-2 border-accent' : ''
+            }`}
+            draggable={canManage}
+            onDragStart={(e) => e.dataTransfer.setData('text/channel', c.id)}
+            onDragOver={(e) => {
+              if (canManage) {
+                e.preventDefault();
+                setDragOver(c.id);
+              }
+            }}
+            onDragLeave={() => setDragOver((v) => (v === c.id ? null : v))}
+            onDrop={(e) => {
+              setDragOver(null);
+              const dragged = e.dataTransfer.getData('text/channel');
+              if (dragged) onReorder(dragged, c.id);
+            }}
+          >
             <button
               onClick={() => (c.type === 'voice' ? onVoice(c.id) : onSelect(c.id))}
               className={`flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-bg-soft hover:text-text ${
