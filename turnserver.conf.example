@@ -1,0 +1,12 @@
+# coturn config for NetChat voice/video (spec §10, §13).
+# Copy to /etc/turnserver.conf on the Prague PC (or use docker-compose.coturn.yml).
+# static-auth-secret MUST equal TURN_SECRET in server/.env.
+listening-port=3478
+realm=netchat.local
+use-auth-secret
+static-auth-secret=CHANGE_ME_SAME_AS_TURN_SECRET
+min-port=49152
+max-port=49252
+# external-ip=<your home public IP>   # or leave commented to auto-detect
+no-tls
+no-dtls

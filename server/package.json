@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "db:migrate": "tsx src/db/migrate.ts",
     "admin:reset-password": "tsx src/scripts/resetPassword.ts",
+    "smoke": "tsx src/scripts/smokeTest.ts",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -45,6 +46,7 @@
     "@types/node": "^20.14.0",
     "@types/qrcode": "^1.5.5",
     "@types/sanitize-html": "^2.13.0",
+    "socket.io-client": "^4.8.3",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"

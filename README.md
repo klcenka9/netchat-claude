@@ -70,10 +70,24 @@ npm run admin:reset-password -- --username <name>
    npm i -g pm2 && cd ../server && pm2 start ecosystem.config.js && pm2 save && pm2 startup
    ```
 2. **Cloudflare Tunnel** (no open ports for the app): install `cloudflared`, `cloudflared tunnel create netchat`, map `chat.<domain>` → `http://localhost:3000` in the dashboard, install as a service. Cloudflare terminates HTTPS at its edge; the app listens on plain HTTP locally.
-3. **coturn** (the only port-forward): `docker compose -f docker-compose.coturn.yml up -d` with `TURN_SECRET` set, forward UDP `3478` + `49152-49252` on the router, and a **DNS-only** `turn.<domain>` A record kept current by the DDNS cron in §13.
-4. **Backups**: `cp server/netchat.db backups/netchat-$(date +%F).db` daily via cron, keep ~14.
+3. **coturn** (the only port-forward): `docker compose -f docker-compose.coturn.yml up -d` with `TURN_SECRET` set (or copy `turnserver.conf.example` → `/etc/turnserver.conf`), forward UDP `3478` + `49152-49252` on the router, and a **DNS-only** `turn.<domain>` A record kept current by `scripts/ddns-update.sh` (cron every 5–10 min; needs `CF_API_TOKEN`/`ZONE_ID`/`RECORD_ID`/`TURN_NAME`).
+4. **Backups**: `scripts/backup.sh` daily via cron (`0 3 * * * /path/to/netchat/scripts/backup.sh`) — consistent SQLite snapshot, keeps ~14 days.
 
 Redeploy after a push: `git pull && ./deploy.sh`.
+
+### Verify after deploy
+
+```bash
+cd server
+# with the server running locally on :3000:
+BASE=http://localhost:3000 CODE=<your REGISTRATION_CODE> npm run smoke
+```
+
+`npm run smoke` runs an end-to-end check of the whole REST + Socket.io surface
+(auth + code gating, servers/invites, live messaging + markdown, edit/react/pin,
+threads, attachments, FTS search, custom emoji, webhook ingress, role escalation
+guard, permission-overwrite channel hiding, moderation, friends, DMs, audit log,
+ICE config) and exits non-zero on any failure. `npm test` runs the 81 unit tests.
 
 ## Build phases
 
