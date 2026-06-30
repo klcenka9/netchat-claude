@@ -9,8 +9,20 @@ import { useReadStateStore, type NotificationLevel } from '../store/readStateSto
 import { requestNotificationPermission } from '../utils/notify';
 import RolesEditor from './RolesEditor';
 import AuditLogPanel from './AuditLogPanel';
+import { WebhooksPanel, EmojiPanel, InvitesPanel, BansPanel } from './ServerSettingsPanels';
 
-type Tab = 'account' | 'profile' | 'appearance' | 'notifications' | 'twofactor' | 'roles' | 'auditlog';
+type Tab =
+  | 'account'
+  | 'profile'
+  | 'appearance'
+  | 'notifications'
+  | 'twofactor'
+  | 'roles'
+  | 'auditlog'
+  | 'emoji'
+  | 'webhooks'
+  | 'invites'
+  | 'bans';
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('account');
@@ -22,6 +34,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const perms = server ? myPermissions(server.id) : 0;
   const canRoles = server && hasPermission(perms, Permissions.MANAGE_ROLES);
   const canAudit = server && hasPermission(perms, Permissions.VIEW_AUDIT_LOG);
+  const canEmoji = server && hasPermission(perms, Permissions.MANAGE_EMOJIS);
+  const canWebhooks = server && hasPermission(perms, Permissions.MANAGE_WEBHOOKS);
+  const canInvites = server && hasPermission(perms, Permissions.MANAGE_SERVER);
+  const canBans = server && hasPermission(perms, Permissions.BAN_MEMBERS);
+  const hasServerTabs = canRoles || canAudit || canEmoji || canWebhooks || canInvites || canBans;
 
   return (
     <div className="fixed inset-0 bg-bg z-50 flex">
@@ -39,31 +56,31 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
         ))}
 
-        {server && (canRoles || canAudit) && (
+        {server && hasServerTabs && (
           <>
             <div className="text-xs font-bold text-muted uppercase mb-2 mt-4 truncate">
               {server.name}
             </div>
-            {canRoles && (
-              <button
-                onClick={() => setTab('roles')}
-                className={`text-left px-2 py-1.5 rounded ${
-                  tab === 'roles' ? 'bg-bg-soft' : 'hover:bg-bg-soft'
-                }`}
-              >
-                Roles
-              </button>
-            )}
-            {canAudit && (
-              <button
-                onClick={() => setTab('auditlog')}
-                className={`text-left px-2 py-1.5 rounded ${
-                  tab === 'auditlog' ? 'bg-bg-soft' : 'hover:bg-bg-soft'
-                }`}
-              >
-                Audit Log
-              </button>
-            )}
+            {([
+              [canRoles, 'roles', 'Roles'],
+              [canEmoji, 'emoji', 'Emoji'],
+              [canWebhooks, 'webhooks', 'Webhooks'],
+              [canInvites, 'invites', 'Invites'],
+              [canBans, 'bans', 'Bans'],
+              [canAudit, 'auditlog', 'Audit Log'],
+            ] as [boolean | null, Tab, string][])
+              .filter(([allowed]) => allowed)
+              .map(([, t, label]) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`text-left px-2 py-1.5 rounded ${
+                    tab === t ? 'bg-bg-soft' : 'hover:bg-bg-soft'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
           </>
         )}
 
@@ -83,6 +100,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         {tab === 'twofactor' && <TwoFactorTab />}
         {tab === 'roles' && server && <RolesEditor serverId={server.id} />}
         {tab === 'auditlog' && server && <AuditLogPanel serverId={server.id} />}
+        {tab === 'emoji' && server && <EmojiPanel serverId={server.id} />}
+        {tab === 'webhooks' && server && <WebhooksPanel serverId={server.id} />}
+        {tab === 'invites' && server && <InvitesPanel serverId={server.id} />}
+        {tab === 'bans' && server && <BansPanel serverId={server.id} />}
       </div>
     </div>
   );
