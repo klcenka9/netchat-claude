@@ -36,11 +36,22 @@ const readSchema = z.object({
   lastReadMessage: z.string(),
 });
 router.put('/read-state', requireAuth, validateBody(readSchema), (req, res) => {
-  db.prepare(
-    `INSERT INTO read_states (user_id, channel_id, dm_channel_id, last_read_message)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id, channel_id, dm_channel_id) DO UPDATE SET last_read_message = excluded.last_read_message`,
-  ).run(req.userId!, req.body.channelId ?? null, req.body.dmChannelId ?? null, req.body.lastReadMessage);
+  const channelId = req.body.channelId ?? null;
+  const dmChannelId = req.body.dmChannelId ?? null;
+  // read_states has NULLable columns in its PRIMARY KEY; SQLite treats NULLs as
+  // distinct, so ON CONFLICT / uniqueness never matches and rows would pile up.
+  // Upsert manually with NULL-safe `IS` matching instead.
+  const updated = db
+    .prepare(
+      `UPDATE read_states SET last_read_message = ?
+       WHERE user_id = ? AND channel_id IS ? AND dm_channel_id IS ?`,
+    )
+    .run(req.body.lastReadMessage, req.userId!, channelId, dmChannelId);
+  if (updated.changes === 0) {
+    db.prepare(
+      'INSERT INTO read_states (user_id, channel_id, dm_channel_id, last_read_message) VALUES (?, ?, ?, ?)',
+    ).run(req.userId!, channelId, dmChannelId, req.body.lastReadMessage);
+  }
   res.json({ ok: true });
 });
 

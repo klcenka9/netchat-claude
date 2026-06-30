@@ -18,6 +18,12 @@ async function refresh(): Promise<boolean> {
   return true;
 }
 
+// Exposed so the socket layer can recover its auth after the 15-min access token
+// expires (rotates the token via the refresh cookie).
+export function refreshAccessToken(): Promise<boolean> {
+  return refresh();
+}
+
 export async function api<T = unknown>(
   path: string,
   opts: RequestInit & { json?: unknown; retry?: boolean } = {},
