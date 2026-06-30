@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import { Hash, Reply, SmilePlus, Pin, Trash2, X } from 'lucide-react';
+import { Hash, Reply, SmilePlus, Pin, Trash2, X, Search, MessagesSquare } from 'lucide-react';
 import { useServerStore } from '../store/serverStore';
 import { useChatStore, type Message } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
+import { useUiStore } from '../store/uiStore';
+import { useReadStateStore } from '../store/readStateStore';
 import { getSocket } from '../api/socket';
 import { uploadFile } from '../api/http';
 import Avatar from './Avatar';
+import EmojiPicker from './EmojiPicker';
 
 export default function ChatView() {
   const { channels, activeServerId, activeChannelId } = useServerStore();
   const { messages, loadMessages, typing } = useChatStore();
   const me = useAuthStore((s) => s.me);
+  const toggleChannelPanel = useUiStore((s) => s.toggleChannelPanel);
+  const markChannelRead = useReadStateStore((s) => s.markChannelRead);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
 
   const channel = (channels[activeServerId ?? ''] ?? []).find((c) => c.id === activeChannelId);
@@ -26,6 +31,13 @@ export default function ChatView() {
       socket?.emit('channel:leave', { channelId: activeChannelId });
     };
   }, [activeChannelId, loadMessages]);
+
+  // Mark the channel read whenever the latest visible message changes.
+  useEffect(() => {
+    if (!activeChannelId || list.length === 0) return;
+    const last = list[list.length - 1];
+    markChannelRead(activeChannelId, last.id);
+  }, [activeChannelId, list, markChannelRead]);
 
   if (!channel) {
     return (
@@ -48,6 +60,29 @@ export default function ChatView() {
             <span className="text-sm text-muted truncate">{channel.topic}</span>
           </>
         )}
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => toggleChannelPanel('threads')}
+            title="Threads"
+            className="text-muted hover:text-text p-1"
+          >
+            <MessagesSquare size={20} />
+          </button>
+          <button
+            onClick={() => toggleChannelPanel('pins')}
+            title="Pinned messages"
+            className="text-muted hover:text-text p-1"
+          >
+            <Pin size={20} />
+          </button>
+          <button
+            onClick={() => toggleChannelPanel('search')}
+            title="Search"
+            className="text-muted hover:text-text p-1"
+          >
+            <Search size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 min-h-0">
@@ -73,7 +108,12 @@ export default function ChatView() {
         </div>
       )}
 
-      <Composer channel={channel} replyTo={replyTo} clearReply={() => setReplyTo(null)} />
+      <Composer
+        channel={channel}
+        serverId={activeServerId}
+        replyTo={replyTo}
+        clearReply={() => setReplyTo(null)}
+      />
     </div>
   );
 }
@@ -88,15 +128,13 @@ function MessageRow({
   onReply: (m: Message) => void;
 }) {
   const [hover, setHover] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const activeServerId = useServerStore((s) => s.activeServerId);
   const name = m.webhook?.name ?? m.author?.display_name ?? 'Unknown';
   const avatarUser = m.webhook
     ? { display_name: m.webhook.name, avatar_url: m.webhook.avatar_url }
     : m.author ?? { display_name: 'Unknown', avatar_url: null };
 
-  function react() {
-    const emoji = prompt('React with emoji:', '👍');
-    if (emoji) getSocket()?.emit('message:react', { messageId: m.id, emoji });
-  }
   function del() {
     if (confirm('Delete this message?')) getSocket()?.emit('message:delete', { messageId: m.id });
   }
@@ -163,9 +201,23 @@ function MessageRow({
         )}
       </div>
 
-      {hover && (
+      {(hover || pickerOpen) && (
         <div className="absolute right-4 -top-3 bg-bg-soft border border-border rounded flex">
-          <IconBtn onClick={react} title="React"><SmilePlus size={16} /></IconBtn>
+          <div className="relative">
+            <IconBtn onClick={() => setPickerOpen((v) => !v)} title="React">
+              <SmilePlus size={16} />
+            </IconBtn>
+            {pickerOpen && (
+              <EmojiPicker
+                serverId={activeServerId}
+                onClose={() => setPickerOpen(false)}
+                onPick={(emoji) => {
+                  getSocket()?.emit('message:react', { messageId: m.id, emoji });
+                  setPickerOpen(false);
+                }}
+              />
+            )}
+          </div>
           <IconBtn onClick={() => onReply(m)} title="Reply"><Reply size={16} /></IconBtn>
           <IconBtn onClick={pin} title="Pin"><Pin size={16} /></IconBtn>
           {mine && (
@@ -211,14 +263,17 @@ function IconBtn({
 
 function Composer({
   channel,
+  serverId,
   replyTo,
   clearReply,
 }: {
   channel: { id: string; name: string };
+  serverId: string | null;
   replyTo: Message | null;
   clearReply: () => void;
 }) {
   const [text, setText] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
   const typingRef = useRef<number>(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -270,7 +325,7 @@ function Composer({
           </button>
         </div>
       )}
-      <div className="bg-panel rounded-lg flex items-center px-4">
+      <div className="bg-panel rounded-lg flex items-center px-4 relative">
         <button onClick={() => fileRef.current?.click()} className="text-muted hover:text-text text-2xl pr-3">
           +
         </button>
@@ -282,6 +337,23 @@ function Composer({
           placeholder={`Message #${channel.name}`}
           className="flex-1 bg-transparent py-3 outline-none"
         />
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          className="text-muted hover:text-text pl-3"
+          title="Emoji"
+        >
+          <SmilePlus size={22} />
+        </button>
+        {pickerOpen && (
+          <EmojiPicker
+            serverId={serverId}
+            onClose={() => setPickerOpen(false)}
+            onPick={(_emoji, display) => {
+              setText((t) => t + display);
+              setPickerOpen(false);
+            }}
+          />
+        )}
       </div>
     </div>
   );

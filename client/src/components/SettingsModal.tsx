@@ -2,20 +2,32 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
+import { useServerStore } from '../store/serverStore';
 import { api } from '../api/http';
+import { Permissions, hasPermission } from '../utils/permissions';
+import { useReadStateStore, type NotificationLevel } from '../store/readStateStore';
+import { requestNotificationPermission } from '../utils/notify';
+import RolesEditor from './RolesEditor';
+import AuditLogPanel from './AuditLogPanel';
 
-type Tab = 'account' | 'profile' | 'appearance' | 'twofactor';
+type Tab = 'account' | 'profile' | 'appearance' | 'notifications' | 'twofactor' | 'roles' | 'auditlog';
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('account');
   const { me, logout } = useAuthStore();
+  const { activeServerId, servers, myPermissions } = useServerStore();
   if (!me) return null;
+
+  const server = servers.find((s) => s.id === activeServerId) ?? null;
+  const perms = server ? myPermissions(server.id) : 0;
+  const canRoles = server && hasPermission(perms, Permissions.MANAGE_ROLES);
+  const canAudit = server && hasPermission(perms, Permissions.VIEW_AUDIT_LOG);
 
   return (
     <div className="fixed inset-0 bg-bg z-50 flex">
-      <div className="w-64 bg-bg-alt p-4 flex flex-col">
+      <div className="w-64 bg-bg-alt p-4 flex flex-col overflow-y-auto">
         <div className="text-xs font-bold text-muted uppercase mb-2">User Settings</div>
-        {(['account', 'profile', 'appearance', 'twofactor'] as Tab[]).map((t) => (
+        {(['account', 'profile', 'appearance', 'notifications', 'twofactor'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -26,6 +38,35 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
             {t === 'twofactor' ? 'Two-Factor Auth' : t}
           </button>
         ))}
+
+        {server && (canRoles || canAudit) && (
+          <>
+            <div className="text-xs font-bold text-muted uppercase mb-2 mt-4 truncate">
+              {server.name}
+            </div>
+            {canRoles && (
+              <button
+                onClick={() => setTab('roles')}
+                className={`text-left px-2 py-1.5 rounded ${
+                  tab === 'roles' ? 'bg-bg-soft' : 'hover:bg-bg-soft'
+                }`}
+              >
+                Roles
+              </button>
+            )}
+            {canAudit && (
+              <button
+                onClick={() => setTab('auditlog')}
+                className={`text-left px-2 py-1.5 rounded ${
+                  tab === 'auditlog' ? 'bg-bg-soft' : 'hover:bg-bg-soft'
+                }`}
+              >
+                Audit Log
+              </button>
+            )}
+          </>
+        )}
+
         <button onClick={logout} className="text-left px-2 py-1.5 rounded text-red-400 hover:bg-bg-soft mt-2">
           Log Out
         </button>
@@ -38,7 +79,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
         {tab === 'account' && <AccountTab />}
         {tab === 'profile' && <ProfileTab />}
         {tab === 'appearance' && <AppearanceTab />}
+        {tab === 'notifications' && <NotificationsTab serverId={server?.id ?? null} />}
         {tab === 'twofactor' && <TwoFactorTab />}
+        {tab === 'roles' && server && <RolesEditor serverId={server.id} />}
+        {tab === 'auditlog' && server && <AuditLogPanel serverId={server.id} />}
       </div>
     </div>
   );
@@ -142,6 +186,93 @@ function TwoFactorTab() {
         </button>
       )}
       {msg && <p className="mt-3 text-sm">{msg}</p>}
+    </div>
+  );
+}
+
+function NotificationsTab({ serverId }: { serverId: string | null }) {
+  const { activeChannelId } = useServerStore();
+  const { notificationSettings, setNotificationLevel, levelFor } = useReadStateStore();
+  const [perm, setPerm] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default',
+  );
+  void notificationSettings;
+
+  const channel = (useServerStore.getState().channels[serverId ?? ''] ?? []).find(
+    (c) => c.id === activeChannelId,
+  );
+
+  const levels: NotificationLevel[] = ['all', 'mentions', 'none'];
+
+  return (
+    <div className="max-w-lg">
+      <h2 className="text-xl font-bold mb-4">Notifications</h2>
+      <div className="bg-bg-alt rounded p-4 mb-4">
+        <div className="text-sm mb-2">Browser notifications: {perm}</div>
+        {perm !== 'granted' && (
+          <button
+            onClick={async () => {
+              await requestNotificationPermission();
+              setPerm(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+            }}
+            className="bg-accent text-white px-4 py-2 rounded"
+          >
+            Enable browser notifications
+          </button>
+        )}
+      </div>
+
+      {serverId && (
+        <div className="mb-4">
+          <div className="text-xs font-bold text-muted uppercase mb-1">This server</div>
+          <LevelPicker
+            current={levelFor(serverId, '')}
+            levels={levels}
+            onPick={(l) => setNotificationLevel('server', serverId, l)}
+          />
+        </div>
+      )}
+      {channel && (
+        <div>
+          <div className="text-xs font-bold text-muted uppercase mb-1">#{channel.name}</div>
+          <LevelPicker
+            current={levelFor(serverId, channel.id)}
+            levels={levels}
+            onPick={(l) => setNotificationLevel('channel', channel.id, l)}
+          />
+        </div>
+      )}
+      {!serverId && (
+        <div className="text-muted text-sm">
+          Open a server to configure per-server / per-channel notification levels.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LevelPicker({
+  current,
+  levels,
+  onPick,
+}: {
+  current: NotificationLevel;
+  levels: NotificationLevel[];
+  onPick: (l: NotificationLevel) => void;
+}) {
+  return (
+    <div className="flex gap-2">
+      {levels.map((l) => (
+        <button
+          key={l}
+          onClick={() => onPick(l)}
+          className={`px-3 py-1.5 rounded text-sm capitalize ${
+            current === l ? 'bg-accent text-white' : 'bg-bg-soft hover:bg-bg-alt'
+          }`}
+        >
+          {l}
+        </button>
+      ))}
     </div>
   );
 }

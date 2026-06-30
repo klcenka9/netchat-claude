@@ -1,5 +1,8 @@
-import { useServerStore } from '../store/serverStore';
+import { useState } from 'react';
+import { useServerStore, type Member } from '../store/serverStore';
 import { usePresenceStore } from '../store/presenceStore';
+import { api } from '../api/http';
+import { Permissions, hasPermission } from '../utils/permissions';
 import Avatar from './Avatar';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -11,11 +14,13 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function MemberList() {
-  const { activeServerId, members, roles } = useServerStore();
+  const { activeServerId, members, roles, myPermissions } = useServerStore();
   const presence = usePresenceStore((s) => s.statuses);
+  const [editing, setEditing] = useState<string | null>(null);
   if (!activeServerId) return null;
   const list = members[activeServerId] ?? [];
   const serverRoles = roles[activeServerId] ?? [];
+  const canManageRoles = hasPermission(myPermissions(activeServerId), Permissions.MANAGE_ROLES);
 
   // Group by highest hoisted role, else Online/Offline (spec §11).
   const hoisted = serverRoles.filter((r) => r.hoist).sort((a, b) => b.position - a.position);
@@ -46,23 +51,85 @@ export default function MemberList() {
           {g.members.map((m) => {
             const status = presence[m.user_id]?.status ?? m.status;
             return (
-              <div key={m.user_id} className="flex items-center gap-2 py-1 rounded hover:bg-bg-soft px-1">
-                <div className="relative">
-                  <Avatar user={m} size={32} />
-                  <span
-                    className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-bg-alt ${
-                      STATUS_COLORS[status] ?? 'bg-gray-500'
-                    }`}
+              <div key={m.user_id} className="relative">
+                <button
+                  onClick={() => canManageRoles && setEditing(editing === m.user_id ? null : m.user_id)}
+                  className="w-full flex items-center gap-2 py-1 rounded hover:bg-bg-soft px-1 text-left"
+                >
+                  <div className="relative">
+                    <Avatar user={m} size={32} />
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-bg-alt ${
+                        STATUS_COLORS[status] ?? 'bg-gray-500'
+                      }`}
+                    />
+                  </div>
+                  <span className={`text-sm truncate ${status === 'offline' ? 'text-muted' : ''}`}>
+                    {m.nickname ?? m.display_name}
+                  </span>
+                </button>
+                {canManageRoles && editing === m.user_id && (
+                  <RolePopover
+                    serverId={activeServerId}
+                    member={m}
+                    roles={serverRoles}
+                    onClose={() => setEditing(null)}
                   />
-                </div>
-                <span className={`text-sm truncate ${status === 'offline' ? 'text-muted' : ''}`}>
-                  {m.nickname ?? m.display_name}
-                </span>
+                )}
               </div>
             );
           })}
         </div>
       ))}
+    </div>
+  );
+}
+
+function RolePopover({
+  serverId,
+  member,
+  roles,
+  onClose,
+}: {
+  serverId: string;
+  member: Member;
+  roles: { id: string; name: string; color: string; is_default: number }[];
+  onClose: () => void;
+}) {
+  const reloadMembers = useServerStore((s) => s.reloadMembers);
+  const [err, setErr] = useState('');
+  const assignable = roles.filter((r) => !r.is_default);
+
+  async function toggle(roleId: string, has: boolean) {
+    setErr('');
+    try {
+      await api(`/servers/${serverId}/members/${member.user_id}/roles/${roleId}`, {
+        method: has ? 'DELETE' : 'PUT',
+      });
+      await reloadMembers(serverId);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  return (
+    <div
+      className="absolute right-2 top-8 w-52 bg-bg-soft border border-border rounded-lg shadow-lg p-2 z-30"
+      onMouseLeave={onClose}
+    >
+      <div className="text-xs font-bold text-muted uppercase mb-1">Roles</div>
+      {err && <div className="text-red-300 text-xs mb-1">{err}</div>}
+      {assignable.length === 0 && <div className="text-muted text-xs">No assignable roles.</div>}
+      {assignable.map((r) => {
+        const has = member.roleIds.includes(r.id);
+        return (
+          <label key={r.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+            <input type="checkbox" checked={has} onChange={() => toggle(r.id, has)} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: r.color || '#99aab5' }} />
+            <span className="truncate">{r.name}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../api/http';
+import { useAuthStore } from './authStore';
+import { Permissions } from '../utils/permissions';
 
 export interface Server {
   id: string;
@@ -62,6 +64,12 @@ interface ServerState {
   joinInvite: (code: string) => Promise<void>;
   upsertChannel: (c: Channel) => void;
   removeChannel: (id: string, serverId: string) => void;
+  upsertCategory: (c: Category) => void;
+  upsertRole: (r: Role) => void;
+  removeRole: (id: string, serverId: string) => void;
+  reloadRoles: (serverId: string) => Promise<void>;
+  reloadMembers: (serverId: string) => Promise<void>;
+  myPermissions: (serverId: string) => number;
 }
 
 export const useServerStore = create<ServerState>((set, get) => ({
@@ -125,5 +133,58 @@ export const useServerStore = create<ServerState>((set, get) => ({
         [serverId]: (s.channels[serverId] ?? []).filter((c) => c.id !== id),
       },
     }));
+  },
+
+  upsertCategory(c) {
+    set((s) => {
+      const list = s.categories[c.server_id] ?? [];
+      const next = list.some((x) => x.id === c.id)
+        ? list.map((x) => (x.id === c.id ? c : x))
+        : [...list, c];
+      return { categories: { ...s.categories, [c.server_id]: next } };
+    });
+  },
+
+  upsertRole(r) {
+    set((s) => {
+      const list = s.roles[r.server_id] ?? [];
+      const next = list.some((x) => x.id === r.id)
+        ? list.map((x) => (x.id === r.id ? r : x))
+        : [...list, r];
+      return { roles: { ...s.roles, [r.server_id]: next } };
+    });
+  },
+
+  removeRole(id, serverId) {
+    set((s) => ({
+      roles: { ...s.roles, [serverId]: (s.roles[serverId] ?? []).filter((r) => r.id !== id) },
+    }));
+  },
+
+  async reloadRoles(serverId) {
+    const roles = await api<Role[]>(`/servers/${serverId}/roles`);
+    set((s) => ({ roles: { ...s.roles, [serverId]: roles } }));
+  },
+
+  async reloadMembers(serverId) {
+    const members = await api<Member[]>(`/servers/${serverId}/members`);
+    set((s) => ({ members: { ...s.members, [serverId]: members } }));
+  },
+
+  // Compute the current user's base (server-level) permission bitfield: owner gets
+  // everything, otherwise OR of all assigned role permission bitfields.
+  myPermissions(serverId) {
+    const meId = useAuthStore.getState().me?.id;
+    const state = get();
+    const server = state.servers.find((s) => s.id === serverId);
+    if (meId && server?.owner_id === meId) return Permissions.ADMINISTRATOR;
+    const roles = state.roles[serverId] ?? [];
+    const member = (state.members[serverId] ?? []).find((m) => m.user_id === meId);
+    const myRoleIds = new Set(member?.roleIds ?? []);
+    let bits = 0;
+    for (const r of roles) {
+      if (r.is_default || myRoleIds.has(r.id)) bits |= r.permissions;
+    }
+    return bits;
   },
 }));

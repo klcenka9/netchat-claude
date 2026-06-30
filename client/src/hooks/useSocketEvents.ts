@@ -5,15 +5,51 @@ import { useDmStore } from '../store/dmStore';
 import { usePresenceStore } from '../store/presenceStore';
 import { useVoiceStore } from '../store/voiceStore';
 import { useServerStore } from '../store/serverStore';
+import { useReadStateStore } from '../store/readStateStore';
+import { useAuthStore } from '../store/authStore';
+import { useFriendsStore } from '../store/friendsStore';
+import { mentionsMe, fireNotification } from '../utils/notify';
 import type { Message } from '../store/chatStore';
 import type { DmMessage } from '../store/dmStore';
+
+// Resolve which server a channel belongs to (for notification level + mention checks).
+function serverIdForChannel(channelId: string): string | null {
+  const channels = useServerStore.getState().channels;
+  for (const [serverId, list] of Object.entries(channels)) {
+    if (list.some((c) => c.id === channelId)) return serverId;
+  }
+  return null;
+}
 
 // Single place wiring server->client socket events into the stores (spec §9, §11).
 export function useSocketEvents(onIncomingCall: (dmChannelId: string, fromUserId: string) => void) {
   useEffect(() => {
     const socket = connectSocket();
 
-    const onNew = (m: Message) => useChatStore.getState().addMessage(m);
+    const onNew = (m: Message) => {
+      useChatStore.getState().addMessage(m);
+      // Unread tracking + browser notification (spec §11).
+      const read = useReadStateStore.getState();
+      read.noteLatestChannel(m.channelId, m.id);
+      const meId = useAuthStore.getState().me?.id;
+      if (m.author?.id === meId) {
+        // Our own message: implicitly read.
+        read.markChannelRead(m.channelId, m.id);
+        return;
+      }
+      const serverId = serverIdForChannel(m.channelId);
+      const level = read.levelFor(serverId, m.channelId);
+      const mentioned = mentionsMe(m, serverId);
+      if (level === 'all' || (level === 'mentions' && mentioned)) {
+        const channel = (useServerStore.getState().channels[serverId ?? ''] ?? []).find(
+          (c) => c.id === m.channelId,
+        );
+        fireNotification(
+          `${m.author?.display_name ?? 'New message'}${channel ? ` · #${channel.name}` : ''}`,
+          m.content ?? 'sent a message',
+        );
+      }
+    };
     const onUpdated = (m: Message) => useChatStore.getState().updateMessage(m);
     const onDeleted = (p: { channelId: string; messageId: string }) =>
       useChatStore.getState().removeMessage(p.channelId, p.messageId);
@@ -37,7 +73,17 @@ export function useSocketEvents(onIncomingCall: (dmChannelId: string, fromUserId
     const onPresence = (p: { userId: string; status: string; customStatus: string | null }) =>
       usePresenceStore.getState().set(p.userId, p.status, p.customStatus);
 
-    const onDmNew = (m: DmMessage) => useDmStore.getState().addMessage(m);
+    const onDmNew = (m: DmMessage) => {
+      useDmStore.getState().addMessage(m);
+      const read = useReadStateStore.getState();
+      read.noteLatestDm(m.dmChannelId, m.id);
+      const meId = useAuthStore.getState().me?.id;
+      if (m.author?.id === meId) {
+        read.markDmRead(m.dmChannelId, m.id);
+        return;
+      }
+      fireNotification(m.author?.display_name ?? 'Direct Message', m.content ?? 'sent a message');
+    };
     const onDmUpdated = (m: DmMessage) => useDmStore.getState().updateMessage(m);
     const onDmDeleted = (p: { dmChannelId: string; messageId: string }) =>
       useDmStore.getState().removeMessage(p.dmChannelId, p.messageId);
@@ -45,6 +91,18 @@ export function useSocketEvents(onIncomingCall: (dmChannelId: string, fromUserId
     const onChannelCreated = (c: any) => useServerStore.getState().upsertChannel(c);
     const onChannelDeleted = (p: { id: string; serverId: string }) =>
       useServerStore.getState().removeChannel(p.id, p.serverId);
+    const onChannelUpdated = (c: any) => useServerStore.getState().upsertChannel(c);
+    const onCategoryCreated = (c: any) => useServerStore.getState().upsertCategory(c);
+    const onThreadCreated = (c: any) => useServerStore.getState().upsertChannel(c);
+    const onRoleCreated = (r: any) => useServerStore.getState().upsertRole(r);
+    const onRoleUpdated = (r: any) => useServerStore.getState().upsertRole(r);
+    const onRoleDeleted = (p: { id: string; serverId: string }) =>
+      useServerStore.getState().removeRole(p.id, p.serverId);
+    const onMemberRoles = (p: { serverId: string }) =>
+      useServerStore.getState().reloadMembers(p.serverId);
+    const reloadFriends = () => {
+      useFriendsStore.getState().load();
+    };
 
     // Voice mesh
     const onVoiceJoined = (p: { userId: string }) =>
@@ -87,6 +145,16 @@ export function useSocketEvents(onIncomingCall: (dmChannelId: string, fromUserId
     socket.on('dm:deleted', onDmDeleted);
     socket.on('channel:created', onChannelCreated);
     socket.on('channel:deleted', onChannelDeleted);
+    socket.on('channel:updated', onChannelUpdated);
+    socket.on('category:created', onCategoryCreated);
+    socket.on('thread:created', onThreadCreated);
+    socket.on('role:created', onRoleCreated);
+    socket.on('role:updated', onRoleUpdated);
+    socket.on('role:deleted', onRoleDeleted);
+    socket.on('member:roles-updated', onMemberRoles);
+    socket.on('friend:request-received', reloadFriends);
+    socket.on('friend:request-accepted', reloadFriends);
+    socket.on('friend:removed', reloadFriends);
     socket.on('voice:user-joined', onVoiceJoined);
     socket.on('voice:user-left', onVoiceLeft);
     socket.on('voice:signal', onVoiceSignal);
@@ -109,6 +177,16 @@ export function useSocketEvents(onIncomingCall: (dmChannelId: string, fromUserId
       socket.off('dm:deleted', onDmDeleted);
       socket.off('channel:created', onChannelCreated);
       socket.off('channel:deleted', onChannelDeleted);
+      socket.off('channel:updated', onChannelUpdated);
+      socket.off('category:created', onCategoryCreated);
+      socket.off('thread:created', onThreadCreated);
+      socket.off('role:created', onRoleCreated);
+      socket.off('role:updated', onRoleUpdated);
+      socket.off('role:deleted', onRoleDeleted);
+      socket.off('member:roles-updated', onMemberRoles);
+      socket.off('friend:request-received', reloadFriends);
+      socket.off('friend:request-accepted', reloadFriends);
+      socket.off('friend:removed', reloadFriends);
       socket.off('voice:user-joined', onVoiceJoined);
       socket.off('voice:user-left', onVoiceLeft);
       socket.off('voice:signal', onVoiceSignal);
