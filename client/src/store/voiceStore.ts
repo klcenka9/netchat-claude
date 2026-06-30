@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../api/http';
 import { getSocket } from '../api/socket';
+import { useSettingsStore } from './settingsStore';
 
 // One active call at a time. Context is either a server voice channel or a DM call;
 // both use the same mesh engine, differing only in the socket event names (§10).
@@ -30,6 +31,7 @@ interface VoiceState {
   toggleDeafen: () => void;
   toggleCamera: () => Promise<void>;
   toggleScreen: () => Promise<void>;
+  setPttHeld: (held: boolean) => void;
   _handleRosterUser: (userId: string, initiate: boolean) => Promise<void>;
   _handleSignal: (fromUserId: string, signal: any) => Promise<void>;
   _removeParticipant: (userId: string) => void;
@@ -72,7 +74,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     } catch {
       /* fall back to STUN-only */
     }
-    const localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const { inputDeviceId, pushToTalk } = useSettingsStore.getState();
+    const localStream = await navigator.mediaDevices.getUserMedia({
+      audio: inputDeviceId ? { deviceId: { exact: inputDeviceId } } : true,
+      video: false,
+    });
+    // Push-to-talk: start muted at the track level until the key is held (spec §10).
+    if (pushToTalk) localStream.getAudioTracks().forEach((t) => (t.enabled = false));
     set({ context: ctx, localStream, participants: {}, muted: false, deafened: false });
 
     const socket = getSocket();
@@ -118,6 +126,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           deafened,
         });
     }
+  },
+
+  // Push-to-talk: enable the local audio track only while the key is held.
+  // No-op when the user has toggled an explicit mute.
+  setPttHeld(held) {
+    const { localStream, muted, context } = get();
+    if (!context || muted) return;
+    localStream?.getAudioTracks().forEach((t) => (t.enabled = held));
   },
 
   toggleDeafen() {

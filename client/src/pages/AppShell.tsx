@@ -18,6 +18,7 @@ import SettingsModal from '../components/SettingsModal';
 import IncomingCallModal from '../components/IncomingCallModal';
 import VoicePanel from '../components/VoicePanel';
 import { useVoiceStore } from '../store/voiceStore';
+import { useSettingsStore } from '../store/settingsStore';
 
 export type Mode = { kind: 'server' } | { kind: 'home' };
 
@@ -48,6 +49,24 @@ export default function AppShell() {
     loadReadState();
     loadNotificationSettings();
   }, [loadServers, loadDms, loadReadState, loadNotificationSettings]);
+
+  // Global push-to-talk: hold the configured key to open the mic (spec §10).
+  useEffect(() => {
+    function down(e: KeyboardEvent) {
+      const { pushToTalk, pttKey } = useSettingsStore.getState();
+      if (pushToTalk && e.code === pttKey && !e.repeat) useVoiceStore.getState().setPttHeld(true);
+    }
+    function up(e: KeyboardEvent) {
+      const { pushToTalk, pttKey } = useSettingsStore.getState();
+      if (pushToTalk && e.code === pttKey) useVoiceStore.getState().setPttHeld(false);
+    }
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
 
   return (
     <div className="h-full flex">
